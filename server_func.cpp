@@ -1,5 +1,4 @@
 #include "server_func.h"
-#include <sys/socket.h>
 #include "databaseutils.h"
 
 void make_non_blocking(int fd){
@@ -14,42 +13,57 @@ void make_non_blocking(int fd){
 }
 
 
-void handle_new_connection(int server_fd, std::unordered_map<int, std::unique_ptr<Connection>> &connections){
+void handle_new_connection(int epoll_fd, int server_fd, std::vector<struct epoll_event> &poll_fds, std::unordered_map<int, std::unique_ptr<Connection>> &connections){
+    struct epoll_event ev;
     int client_fd;
     socklen_t socklen;
     struct sockaddr_storage client_addr;
 
-    socklen = sizeof(client_addr);
-    client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &socklen);
-    if (client_fd < 0) {
-        throw std::runtime_error("Error accepting new connection");
-    }
+    for(;;){
+        client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &socklen);
+        if (client_fd < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // No more connections to accept
+                break;
+            }
+            throw std::runtime_error("Error accepting new connections");
+        }
+        // Make client socket non-blocking
+        make_non_blocking(client_fd);
 
+        ev.events = EPOLLIN | EPOLLET;
+        ev.data.fd = client_fd; 
+        poll_fds.push_back(ev);
+        if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev) < 0){
+            close(client_fd);
+            continue;
+        }
+
+    }
+    return
 }
 
-void handle_client_connection(int server_fd){
-    int client_fd;
-    socklen_t socklen;
-    struct sockaddr_storage client_addr;
-
-    socklen = sizeof(client_addr);
-    client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &socklen);
-    if (client_fd < 0) {
-        throw std::runtime_error("Failed to set socket as non blocking");
+void disconnect_client(int epoll_fd,int client_fd){
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, NULL) < 0){
+        throw std::system_error(errno, std::generic_category(), "Failed to open an epoll file descriptor.");
     }
 }
 
-void process_poll_events(int server_fd, std::vector<struct pollfd> &poll_fds, std::unordered_map<int, std::unique_ptr<Connection>> &connections){
-    for(int i = poll_fds.size() - 1; i >= 0 ; i = i - 1) {
+void process_poll_events(int server_fd, int epoll_fd, std::vector<struct epoll_event> &poll_fds, std::unordered_map<int, std::unique_ptr<Connection>> &connections){
+    for(int i = poll_fds.size() - 1; i  ; i = i - 1) {
         // Check if someone's ready to read
-        struct pollfd event = poll_fds[i];
-        if (event.revents & (POLLIN | POLLHUP)) {
-            if (event.fd == server_fd) {
-                // If we're the listener, it's a new connection
-                handle_new_connection(server_fd, connections);
-            } else {
-                // handle client connections
-                handle_client_connection(server_fd, fd_count, *pfds, &i);
+        struct epoll_event event = poll_fds[i];
+        if (event.data.fd == server_fd) {
+            // New connection(s) available
+            handle_new_connection(epoll_fd, server_fd, poll_fds, connections);
+        }else{
+            // Client event
+            if (event.events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
+                // Client disconnected or error
+                disconnect_client(epoll_fd, event.data.fd);
+            } else if (event.events & EPOLLIN) {
+                // Data available to read
+                HandleClientRequest(fd);
             }
         }
     }
