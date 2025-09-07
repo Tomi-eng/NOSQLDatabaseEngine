@@ -44,5 +44,8 @@ struct Response {
     std::vector<std::string> values; // only for GET
 };
 
-std::vector<u_int8_t> serializedata(const Request &query);
-std::vector<u_int8_t> deserializedata(std::vector<u_int8_t> &data);
+
+std::vector<u_int8_t> EncodeResponse(const Response &res);
+Request DecodeRequest(std::vector<u_int8_t> &data);
+std::vector<u_int8_t> EncodeRequest(const Request &query);
+Response DecodeResponse(std::vector<u_int8_t> &data);

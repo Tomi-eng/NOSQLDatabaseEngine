@@ -40,7 +40,7 @@ void handle_new_connection(int epoll_fd, int server_fd, std::vector<struct epoll
         }
 
     }
-    return
+    return;
 }
 
 void disconnect_client(int epoll_fd,int client_fd){
